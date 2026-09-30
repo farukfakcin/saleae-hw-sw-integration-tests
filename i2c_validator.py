@@ -1,6 +1,6 @@
 """I2C decoded-frame and bus timing assertions."""
 
-from timing import assert_pulse_widths, assert_sequence, assert_setup_hold, level_at
+from timing import Frame, assert_pulse_widths, assert_sequence, assert_setup_hold, level_at
 
 
 def _byte(text):
@@ -10,6 +10,35 @@ def _byte(text):
 class I2CValidator:
     def __init__(self, frames):
         self.frames = list(frames)
+
+    @classmethod
+    def from_signals(cls, scl, sda):
+        """Decode one 7-bit-address I2C transaction from digital transitions."""
+        boundaries = []
+        for (_, before), (time, after) in zip(sda, sda[1:]):
+            if level_at(scl, time) == 1:
+                boundaries.append((time, "start" if before == 1 else "stop"))
+        if len(boundaries) != 2 or [kind for _, kind in boundaries] != ["start", "stop"]:
+            raise AssertionError("Expected exactly one START and one STOP")
+        begin, end = boundaries[0][0], boundaries[1][0]
+        samples = [(time, level_at(sda, time)) for time, state in scl[1:]
+                   if state == 1 and begin < time < end]
+        if len(samples) % 9 == 1 and len(samples) > 1 and samples[-2][1] == 1:
+            # After a final NACK, a master can clock SDA low before issuing STOP.
+            samples.pop()
+        if not samples or len(samples) % 9:
+            raise AssertionError("Incomplete I2C bytes or ACK bits")
+        frames = [Frame(begin, begin, "start", "")]
+        for offset in range(0, len(samples), 9):
+            bits = samples[offset:offset + 9]
+            value = sum(bit << (7 - index) for index, (_, bit) in enumerate(bits[:8]))
+            frames.append(Frame(bits[0][0], bits[7][0],
+                                "address" if offset == 0 else "data",
+                                hex(value >> 1 if offset == 0 else value)))
+            frames.append(Frame(bits[8][0], bits[8][0],
+                                "ack" if bits[8][1] == 0 else "nack", ""))
+        frames.append(Frame(end, end, "stop", ""))
+        return cls(frames)
 
     def validate(self, address, expected_data, *, allow_nack=False):
         """Check a complete START/address/ACK/data/ACK/STOP transaction."""

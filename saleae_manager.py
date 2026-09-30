@@ -33,7 +33,8 @@ class SaleaeManager:
             raise RuntimeError(f"Saleae device {self.device_id!r} not connected")
         return self
 
-    def start_capture(self, channels, duration_seconds, sample_rate=10_000_000):
+    def start_capture(self, channels, duration_seconds, sample_rate=10_000_000,
+                      analog_channels=(), analog_sample_rate=None):
         channels = list(channels)
         if not channels or len(set(channels)) != len(channels) or any(
             not isinstance(channel, int) or isinstance(channel, bool) or not 0 <= channel < 16
@@ -42,6 +43,14 @@ class SaleaeManager:
             raise ValueError("channels must be unique digital channels 0 through 15")
         if duration_seconds <= 0 or sample_rate <= 0:
             raise ValueError("duration_seconds and sample_rate must be positive")
+        analog_channels = list(analog_channels)
+        if len(set(analog_channels)) != len(analog_channels) or any(
+            not isinstance(channel, int) or isinstance(channel, bool) or not 0 <= channel < 16
+            for channel in analog_channels
+        ):
+            raise ValueError("analog_channels must be unique channels 0 through 15")
+        if analog_sample_rate is not None and analog_sample_rate <= 0:
+            raise ValueError("analog_sample_rate must be positive")
         if self.capture is not None:
             raise RuntimeError("Close the current capture before starting another")
         if self.manager is None:
@@ -49,7 +58,8 @@ class SaleaeManager:
         self.capture = self.manager.start_capture(
             device_id=self.device_id,
             device_configuration=automation.LogicDeviceConfiguration(
-                enabled_digital_channels=channels, digital_sample_rate=sample_rate
+                enabled_digital_channels=channels, digital_sample_rate=sample_rate,
+                enabled_analog_channels=analog_channels, analog_sample_rate=analog_sample_rate
             ),
             capture_configuration=automation.CaptureConfiguration(
                 capture_mode=automation.TimedCaptureMode(duration_seconds=duration_seconds)
@@ -92,7 +102,11 @@ class SaleaeManager:
         paths = {}
         for label, analyzer in self.analyzers.items():
             path = directory / f"{label}.csv"
-            self.capture.export_data_table(str(path), analyzers=[analyzer])
+            self.capture.export_data_table(
+                str(path), analyzers=[automation.DataTableExportConfiguration(
+                    analyzer, automation.RadixType.HEXADECIMAL
+                )]
+            )
             paths[label] = path
         raw = directory / "raw"
         raw.mkdir(exist_ok=True)

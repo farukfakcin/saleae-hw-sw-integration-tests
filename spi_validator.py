@@ -1,6 +1,6 @@
 """SPI byte/frame and CPOL/CPHA timing assertions."""
 
-from timing import assert_pulse_widths, assert_sequence, assert_setup_hold, level_at
+from timing import assert_range, assert_sequence, assert_setup_hold, level_at
 
 
 class SPIValidator:
@@ -13,18 +13,39 @@ class SPIValidator:
             raise AssertionError("No SPI frames captured")
         mosi = []
         miso = []
+        selected = False
+        has_cs = any(frame.kind in ("enable", "disable") for frame in self.frames)
         for frame in self.frames:
-            if frame.kind == "mosi":
+            if frame.kind == "enable":
+                if selected:
+                    raise AssertionError("Repeated SPI chip-select assertion")
+                selected = True
+            elif frame.kind == "disable":
+                if not selected:
+                    raise AssertionError("SPI chip-select deasserted without assertion")
+                selected = False
+            elif frame.kind == "mosi":
+                if has_cs and not selected:
+                    raise AssertionError("MOSI byte outside chip-select window")
                 mosi.append(int(frame.data, 0))
             elif frame.kind == "miso":
+                if has_cs and not selected:
+                    raise AssertionError("MISO byte outside chip-select window")
                 miso.append(int(frame.data, 0))
-            elif frame.kind not in ("enable", "disable"):
+            else:
                 raise AssertionError(f"Unexpected SPI frame type: {frame.kind}")
+        if selected:
+            raise AssertionError("SPI chip select never deasserted")
         assert_sequence(mosi, expected_mosi, "MOSI")
         if expected_miso is not None:
             assert_sequence(miso, expected_miso, "MISO")
         if expected_miso is not None and len(mosi) != len(miso):
             raise AssertionError("MOSI/MISO transfer counts differ")
+        if expected_miso is not None:
+            mosi_frames = [frame for frame in self.frames if frame.kind == "mosi"]
+            miso_frames = [frame for frame in self.frames if frame.kind == "miso"]
+            if any(tx.start != rx.start for tx, rx in zip(mosi_frames, miso_frames)):
+                raise AssertionError("MOSI/MISO bytes are not synchronized")
         for previous, current in zip(self.frames, self.frames[1:]):
             if previous.start > current.start:
                 raise AssertionError("SPI frames are not chronological")
@@ -49,7 +70,6 @@ class SPIValidator:
             if not active_clock:
                 raise AssertionError("No clock transitions while CS asserted")
             for (first, _), (second, _) in zip(active_clock, active_clock[1:]):
-                from timing import assert_range
                 assert_range(second - first, min_half_period, max_half_period,
                              "SPI half-period")
             sample_level = cpol ^ (1 - cpha)
