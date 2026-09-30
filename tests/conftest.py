@@ -8,6 +8,11 @@ from saleae_manager import SaleaeManager
 
 
 @pytest.fixture
+def stimulus():
+    pytest.skip("Override the stimulus fixture with a DUT transaction callback")
+
+
+@pytest.fixture
 def saleae():
     if os.environ.get("SALEAE_HARDWARE") != "1":
         pytest.skip("Set SALEAE_HARDWARE=1 with Logic 2 automation enabled")

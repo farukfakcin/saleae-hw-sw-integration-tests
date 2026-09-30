@@ -23,6 +23,8 @@ def test_i2c_transaction():
     with pytest.raises(AssertionError, match="ACK"):
         I2CValidator(captured[:4] + frames(("nack", ""), ("stop", ""))).validate(
             0x48, [0xA5])
+    with pytest.raises(ValueError, match="7-bit"):
+        I2CValidator(captured).validate(0x148, [0xA5])
 
 
 def test_i2c_waveform():
@@ -92,6 +94,8 @@ def test_uart_data_parity_and_stop():
         UARTValidator.validate_signals(edges, [value], baud_rate=rate, parity="odd")
     with pytest.raises(AssertionError, match="baud tolerance"):
         UARTValidator.validate_signals(edges, [value], baud_rate=1020, parity="even")
+    with pytest.raises(AssertionError, match="No UART"):
+        UARTValidator([]).validate([], baud_rate=rate)
 
 
 def test_csv_readers(tmp_path):
@@ -168,3 +172,20 @@ def test_capture_setup_with_fake_sdk(monkeypatch, tmp_path):
         with pytest.raises(ValueError, match="label"):
             device.add_i2c(0, 1)
         assert device.export(tmp_path)["i2c"].exists()
+
+
+def test_connection_failure_closes_manager(monkeypatch):
+    class Manager:
+        closed = False
+
+        def get_devices(self):
+            return []
+
+        def close(self):
+            self.closed = True
+
+    manager = Manager()
+    monkeypatch.setattr("saleae_manager.automation.Manager.connect", lambda **kw: manager)
+    with pytest.raises(RuntimeError, match="one physical"):
+        SaleaeManager().connect()
+    assert manager.closed

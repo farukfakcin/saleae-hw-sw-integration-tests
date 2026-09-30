@@ -13,6 +13,8 @@ class UARTValidator:
             raise ValueError("Unsupported UART format")
         if baud_rate <= 0 or stop_bits not in (1, 2) or not 0 <= tolerance < 1:
             raise ValueError("Invalid UART timing parameters")
+        if not self.frames:
+            raise AssertionError("No UART frames captured")
         values = []
         for frame in self.frames:
             if frame.kind not in ("data", "error", "parity_error", "framing_error"):

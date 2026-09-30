@@ -42,6 +42,9 @@ class I2CValidator:
 
     def validate(self, address, expected_data, *, allow_nack=False):
         """Check a complete START/address/ACK/data/ACK/STOP transaction."""
+        expected_data = list(expected_data)
+        if not 0 <= address < 128 or any(not 0 <= byte < 256 for byte in expected_data):
+            raise ValueError("I2C address must be 7-bit and data bytes must be 8-bit")
         kinds = [frame.kind for frame in self.frames]
         if not kinds or kinds[0] != "start" or kinds[-1] != "stop":
             raise AssertionError("I2C transaction must begin with START and end with STOP")
@@ -66,6 +69,8 @@ class I2CValidator:
             actual.append(_byte(data.data))
             index += 1
         assert_sequence(actual, expected_data, "I2C bytes")
+        if self.frames[-1].end < self.frames[-1].start:
+            raise AssertionError("Reversed I2C STOP frame")
         for previous, current in zip(self.frames, self.frames[1:]):
             if previous.start > previous.end or previous.end > current.start:
                 raise AssertionError("Overlapping or reversed I2C frames")

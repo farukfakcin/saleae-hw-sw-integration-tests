@@ -71,7 +71,7 @@ SALEAE_HARDWARE=1 SPI_MOSI_EXPECT=0x9a SPI_MISO_EXPECT=0x55 python -m pytest -q 
 SALEAE_HARDWARE=1 UART_EXPECT=0x35 UART_BAUD=115200 python -m pytest -q tests/test_hardware.py::test_uart_device
 ```
 
-As shipped these tests **skip** because no project-specific DUT driver exists. Implement the `stimulus` fixture in your local test harness (or replace the template's fixture) before expecting a passing hardware run. Set `SALEAE_PORT` or `SALEAE_DEVICE_ID` if needed. Put additional DUT assertions and raw-timing checks after `export()`; do not treat synthetic offline tests as hardware validation.
+As shipped these tests **skip** because no project-specific DUT driver exists. Replace the default `stimulus` fixture in `tests/conftest.py` with one that returns a callable driving your DUT before expecting a passing hardware run. Set `SALEAE_PORT` or `SALEAE_DEVICE_ID` if needed. Put additional DUT assertions and raw-timing checks after `export()`; do not treat synthetic offline tests as hardware validation.
 
 ## Troubleshooting
 

@@ -23,14 +23,18 @@ class SaleaeManager:
     def connect(self):
         if self.manager is None:
             self.manager = automation.Manager.connect(port=self.port)
-        devices = [device for device in self.manager.get_devices()
-                   if not device.is_simulation]
-        if self.device_id is None:
-            if len(devices) != 1:
-                raise RuntimeError(f"Expected one physical Saleae device, found {len(devices)}")
-            self.device_id = devices[0].device_id
-        elif self.device_id not in {device.device_id for device in devices}:
-            raise RuntimeError(f"Saleae device {self.device_id!r} not connected")
+        try:
+            devices = [device for device in self.manager.get_devices()
+                       if not device.is_simulation]
+            if self.device_id is None:
+                if len(devices) != 1:
+                    raise RuntimeError(f"Expected one physical Saleae device, found {len(devices)}")
+                self.device_id = devices[0].device_id
+            elif self.device_id not in {device.device_id for device in devices}:
+                raise RuntimeError(f"Saleae device {self.device_id!r} not connected")
+        except Exception:
+            self.close()
+            raise
         return self
 
     def start_capture(self, channels, duration_seconds, sample_rate=10_000_000,

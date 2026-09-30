@@ -10,11 +10,6 @@ from timing import read_edges, read_frames
 from uart_validator import UARTValidator
 
 
-@pytest.fixture
-def stimulus():
-    pytest.skip("Override the stimulus fixture with a DUT transaction callback")
-
-
 def _expected(name):
     value = os.environ.get(name)
     if value is None:
