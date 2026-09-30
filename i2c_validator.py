@@ -1,0 +1,95 @@
+"""I2C decoded-frame and bus timing assertions."""
+
+from timing import Frame, assert_pulse_widths, assert_sequence, assert_setup_hold, level_at
+
+
+def _byte(text):
+    return int(text.strip().split()[0], 0)
+
+
+class I2CValidator:
+    def __init__(self, frames):
+        self.frames = list(frames)
+
+    @classmethod
+    def from_signals(cls, scl, sda):
+        """Decode one 7-bit-address I2C transaction from digital transitions."""
+        boundaries = []
+        for (_, before), (time, after) in zip(sda, sda[1:]):
+            if level_at(scl, time) == 1:
+                boundaries.append((time, "start" if before == 1 else "stop"))
+        if len(boundaries) != 2 or [kind for _, kind in boundaries] != ["start", "stop"]:
+            raise AssertionError("Expected exactly one START and one STOP")
+        begin, end = boundaries[0][0], boundaries[1][0]
+        samples = [(time, level_at(sda, time)) for time, state in scl[1:]
+                   if state == 1 and begin < time < end]
+        if len(samples) % 9 == 1 and len(samples) > 1 and samples[-2][1] == 1:
+            # After a final NACK, a master can clock SDA low before issuing STOP.
+            samples.pop()
+        if not samples or len(samples) % 9:
+            raise AssertionError("Incomplete I2C bytes or ACK bits")
+        frames = [Frame(begin, begin, "start", "")]
+        for offset in range(0, len(samples), 9):
+            bits = samples[offset:offset + 9]
+            value = sum(bit << (7 - index) for index, (_, bit) in enumerate(bits[:8]))
+            frames.append(Frame(bits[0][0], bits[7][0],
+                                "address" if offset == 0 else "data",
+                                hex(value >> 1 if offset == 0 else value)))
+            frames.append(Frame(bits[8][0], bits[8][0],
+                                "ack" if bits[8][1] == 0 else "nack", ""))
+        frames.append(Frame(end, end, "stop", ""))
+        return cls(frames)
+
+    def validate(self, address, expected_data, *, allow_nack=False):
+        """Check a complete START/address/ACK/data/ACK/STOP transaction."""
+        expected_data = list(expected_data)
+        if not 0 <= address < 128 or any(not 0 <= byte < 256 for byte in expected_data):
+            raise ValueError("I2C address must be 7-bit and data bytes must be 8-bit")
+        kinds = [frame.kind for frame in self.frames]
+        if not kinds or kinds[0] != "start" or kinds[-1] != "stop":
+            raise AssertionError("I2C transaction must begin with START and end with STOP")
+        if kinds.count("start") != 1 or kinds.count("stop") != 1:
+            raise AssertionError("Unexpected repeated START/STOP; validate each transaction separately")
+        if len(self.frames) < 4 or self.frames[1].kind != "address":
+            raise AssertionError("Missing address after START")
+        if _byte(self.frames[1].data) != address:
+            raise AssertionError(f"I2C address mismatch: {self.frames[1].data}")
+        actual = []
+        index = 2
+        while index < len(self.frames) - 1:
+            ack = self.frames[index]
+            if ack.kind not in ("ack", "nack") or (ack.kind == "nack" and not allow_nack):
+                raise AssertionError(f"Expected ACK at frame {index}")
+            index += 1
+            if index == len(self.frames) - 1:
+                break
+            data = self.frames[index]
+            if data.kind != "data":
+                raise AssertionError(f"Expected data byte at frame {index}")
+            actual.append(_byte(data.data))
+            index += 1
+        assert_sequence(actual, expected_data, "I2C bytes")
+        if self.frames[-1].end < self.frames[-1].start:
+            raise AssertionError("Reversed I2C STOP frame")
+        for previous, current in zip(self.frames, self.frames[1:]):
+            if previous.start > previous.end or previous.end > current.start:
+                raise AssertionError("Overlapping or reversed I2C frames")
+
+    @staticmethod
+    def validate_signals(scl, sda, *, min_high, max_high, min_low, max_low,
+                         setup=0, hold=0):
+        """Check clock widths, data setup/hold, and START/STOP transitions on SDA."""
+        assert_pulse_widths(scl, 1, min_high, max_high)
+        assert_pulse_widths(scl, 0, min_low, max_low)
+        starts = stops = 0
+        for (time, before), (next_time, after) in zip(sda, sda[1:]):
+            if level_at(scl, next_time) == 1:
+                if before == 1 and after == 0:
+                    starts += 1
+                elif before == 0 and after == 1:
+                    stops += 1
+        if not starts or not stops:
+            raise AssertionError("Missing I2C START or STOP transition while SCL high")
+        samples = [(time, level) for time, level in scl[1:] if level == 1]
+        if samples:
+            assert_setup_hold(sda, [scl[0], *samples], 1, setup, hold)
